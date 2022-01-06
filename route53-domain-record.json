@@ -1,0 +1,17 @@
+{
+  "Comment": "Update route53 record set DNSName with Ingress Hostname of Application Load Balancer",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "<RECORD_NAME>.",
+        "Type": "A",
+        "AliasTarget": {
+            "HostedZoneId": "Z35SXDOTRQ7X7K",
+            "DNSName": "<DNS_NAME>.",
+            "EvaluateTargetHealth": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+version: 0.2
+phases:
+  install:
+    commands:
+      - # Install Terraform on ubuntu standard 5.0
+      - echo "Installing Terraform"
+      - curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add -
+      - apt-add-repository "deb [arch=$(dpkg --print-architecture)] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+      - apt install -y terraform
+      # - apt install -y yum-utils
+      # # - yum install -y yum-utils
+      # - yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+      # - yum -y install terraform
+      - # Verify terraform installation
+      - terraform -version
+       # Login to ECR Registry for docker to push the image to ECR Repository
+      # - $(aws ecr get-login --no-include-email)
+      # - aws ecr get-login-password | docker login --username AWS --password-stdin 911075010171.dkr.ecr.us-east-1.amazonaws.com
+      - export KUBECONFIG=$HOME/.kube/config
+  pre_build:
+      commands:
+        # Verify AWS CLI Version        
+        - echo "Verify AWS CLI Version..."
+        - aws --version
+        # Verify Kubeclt version
+        - echo "Verify Kubeclt Version..."
+        - kubectl version --short --client
+        # Verify eksctl version
+        - eksctl version
+  build:
+    commands:
+      - echo "Current working directory is"
+      - pwd
+      - ls -la
+      # Create EKS and MSK Cluster
+      - terraform init
+      - terraform apply --auto-approve
+      # Update KubeConfig to add cluster details
+      - aws eks update-kubeconfig --name team6-eks-cluster
+      # Update aws-auth config map to allow team6 users masters access.
+      - terraform output -raw config_map_aws_auth > configmap.yml
+      - kubectl apply -f configmap.yml
+      -
+      # Create namespace
+      - kubectl apply -f crackdeal-ns.yml
+      # Install NGINX Ingress Controller and Network Load Balancer on top of it.
+      # - kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.0.2/deploy/static/provider/aws/deploy.yaml
+      # Download and install istio
+      - echo "Download and install istio"
+      - curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.11.2  sh -
+      - export PATH=$PWD/istio-1.11.2/bin:$PATH
+      - istioctl install --set profile=demo --force --skip-confirmation
+      - echo "Verify instio installation"
+      - kubectl -n istio-system get deploy
+      - echo "Enable Monitoring Tools"
+      - kubectl apply -f ./istio-1.11.2/samples/addons
+      - echo "Patch services to access from outside"
+      - kubectl patch service tracing --patch '{"spec":{"type":"LoadBalancer"}}' -n istio-system
+      - kubectl patch service grafana --patch '{"spec":{"type":"LoadBalancer"}}' -n istio-system
+      - kubectl patch service kiali --patch '{"spec":{"type":"LoadBalancer"}}' -n istio-system
+      - echo "Patch istio ingress"
+      - kubectl -n istio-system patch svc istio-ingressgateway --patch "$(cat tls-cert.yaml)"
+      # Apply istio gateway and routing resources
+      - kubectl apply -f service-mesh.yaml
+      - kubectl apply -f mtls.yaml
+      # Apply mongodb deployment
+      - kubectl apply -f mongodb/db-depl.yml
+      - echo "Wait for ingress LB and mongodb containers to spin up"
+      # Wait for istio ALBs and mongodb containers to spin up
+      - sleep 120s
+      # Update route53 domain record set "crackdeal.click"
+      - DOMAIN_RECORD_NAME=crackdeal.click
+      - ALB_INGRESS_HOSTNAME=$(kubectl get svc -n istio-system istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+      - cat route53-domain-record.json | sed "s/<RECORD_NAME>/$DOMAIN_RECORD_NAME/" | sed "s/<DNS_NAME>/${ALB_INGRESS_HOSTNAME}/" > change_domain_record.json
+      - echo "Content of route53 domain record set '$DOMAIN_RECORD_NAME' - `cat change_domain_record.json`"
+      - aws route53 change-resource-record-sets --hosted-zone-id Z007200236LH9SZMBG0WZ  --change-batch file://change_domain_record.json
+      # Update route53 domain record set "kiali.crackdeal.click"
+      - DOMAIN_RECORD_NAME=kiali.crackdeal.click
+      - ALB_INGRESS_HOSTNAME=$(kubectl get svc -n istio-system kiali -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+      - cat route53-domain-record.json | sed "s/<RECORD_NAME>/$DOMAIN_RECORD_NAME/" | sed "s/<DNS_NAME>/${ALB_INGRESS_HOSTNAME}/" > change_domain_record.json
+      - echo "Content of route53 domain record set '$DOMAIN_RECORD_NAME' - `cat change_domain_record.json`"
+      - aws route53 change-resource-record-sets --hosted-zone-id Z007200236LH9SZMBG0WZ  --change-batch file://change_domain_record.json
+      # Update route53 domain record set "jaeger.crackdeal.click"
+      - DOMAIN_RECORD_NAME=jaeger.crackdeal.click
+      - ALB_INGRESS_HOSTNAME=$(kubectl get svc -n istio-system tracing -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+      - cat route53-domain-record.json | sed "s/<RECORD_NAME>/$DOMAIN_RECORD_NAME/" | sed "s/<DNS_NAME>/${ALB_INGRESS_HOSTNAME}/" > change_domain_record.json
+      - echo "Content of route53 domain record set '$DOMAIN_RECORD_NAME' - `cat change_domain_record.json`"
+      - aws route53 change-resource-record-sets --hosted-zone-id Z007200236LH9SZMBG0WZ  --change-batch file://change_domain_record.json
+      # Update route53 domain record set "grafana.crackdeal.click"
+      - DOMAIN_RECORD_NAME=grafana.crackdeal.click
+      - ALB_INGRESS_HOSTNAME=$(kubectl get svc -n istio-system grafana -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+      - cat route53-domain-record.json | sed "s/<RECORD_NAME>/$DOMAIN_RECORD_NAME/" | sed "s/<DNS_NAME>/${ALB_INGRESS_HOSTNAME}/" > change_domain_record.json
+      - echo "Content of route53 domain record set '$DOMAIN_RECORD_NAME' - `cat change_domain_record.json`"
+      - aws route53 change-resource-record-sets --hosted-zone-id Z007200236LH9SZMBG0WZ  --change-batch file://change_domain_record.json
+      # Clean-up
+      - rm change_domain_record.json
+      # Expose mongodb pod
+      - echo "Expose mongodb pod"
+      - kubectl expose pod -n crackdeal-ns mongo-ss-0 --port 27017 --target-port 27017 --type LoadBalancer
+      # Create central logging with open search
+      - kubectl create namespace logging
+      - eksctl utils associate-iam-oidc-provider --cluster team6-eks-cluster --approve
+      # - aws iam create-policy --policy-name fluent-bit-policy --policy-document logging/fluent-bit-policy.json
+      - eksctl create iamserviceaccount --name fluent-bit --namespace logging --cluster team6-eks-cluster --attach-policy-arn "arn:aws:iam::911075010171:policy/fluent-bit-policy" --approve --override-existing-serviceaccounts
+      - echo $(kubectl -n logging describe sa fluent-bit)
+      - FLUENTBIT_ROLE=$(eksctl get iamserviceaccount --cluster team6-eks-cluster --namespace logging -o json | jq '.[].status.roleARN' -r)
+      - curl -sS -u "admin:Admin@123" -X PATCH "https://search-product-d5dw4ab5d3mjaz2kvaq2byoza4.us-east-1.es.amazonaws.com/_opendistro/_security/api/rolesmapping/all_access?pretty" -H "Content-Type:application/json" -d'[{"op":"add", "path":"/backend_roles", "value":["'${FLUENTBIT_ROLE}'"]}]'
+      - kubectl apply -f logging/fluentbit.yaml
+      # Configure mongodb replica set
+      - echo "Configure mongodb"
+      - kubectl exec -it -n crackdeal-ns mongo-ss-0 -- mongo
+      - rs.initiate()
+      - var cfg = rs.conf()
+      - cfg.members.host="mongo-ss-0.mongo-h:27017"
+      - rs.reconfig(cfg)
+      - rs.status()
+      - exit
+      

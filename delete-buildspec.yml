@@ -1,0 +1,38 @@
+version: 0.2
+phases:
+  install:
+    commands:
+      - # Install Terraform
+      - echo "Installing Terraform"
+      - yum install -y yum-utils
+      - yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+      - yum -y install terraform
+      - # Verify terraform installation
+      - terraform -version
+      - export KUBECONFIG=$HOME/.kube/config
+  pre_build:
+      commands:
+        # Verify AWS CLI Version        
+        - echo "Verify AWS CLI Version..."
+        - aws --version
+        # Verify Kubeclt version
+        - echo "Verify Kubeclt Version..."
+        - kubectl version --short --client
+  build:
+    commands:
+      - echo "Current working directory is"
+      - pwd
+      - ls -la
+      - aws eks update-kubeconfig --name team6-eks-cluster
+      - kubectl delete service istio-ingressgateway -n istio-system --ignore-not-found=true
+      - kubectl delete service grafana -n istio-system --ignore-not-found=true
+      - kubectl delete service tracing -n istio-system --ignore-not-found=true
+      - kubectl delete service kiali -n istio-system --ignore-not-found=true
+      - kubectl delete service mongo-ss-0 -n crackdeal-ns --ignore-not-found=true
+      # - kubectl delete --ignore-not-found=true -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.0.2/deploy/static/provider/aws/deploy.yaml
+      - eksctl delete iamserviceaccount --name fluent-bit --namespace logging --cluster team6-eks-cluster
+      - OIDCURL=$(aws eks describe-cluster --name team6-eks-cluster --output json | jq -r .cluster.identity.oidc.issuer | sed -e "s*https://**")
+      - echo "OIDCURL" $OIDCURL
+      - aws iam delete-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam::911075010171:oidc-provider/$OIDCURL
+      - terraform init
+      - terraform destroy --auto-approve

@@ -1,0 +1,115 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: crackdeal-gateway
+  namespace: crackdeal-ns
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "crackdeal.click"
+    tls:
+      httpsRedirect: true # sends 301 redirect for http requests
+  - port:
+      number: 443
+      name: https-443
+      protocol: HTTP
+    hosts:
+      - "crackdeal.click"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: crackdeal-vs
+  namespace: crackdeal-ns  
+spec:
+  gateways:
+  - crackdeal-gateway
+  hosts:
+    - "crackdeal.click"
+  http:
+  - match:
+    - uri:
+        prefix: /product/v1/
+    route:
+    - destination:
+        host: product-srv.crackdeal-ns.svc.cluster.local
+        subset: stable
+        port:
+          number: 8081
+      weight: 100
+    # - destination:
+    #     host: product-srv.crackdeal-ns.svc.cluster.local
+    #     subset: canary
+    #     port:
+    #       number: 8081
+    #   weight: 20
+  - match:
+    - uri:
+        prefix: /search/v1/
+    route:
+    - destination:
+        host: search-srv.crackdeal-ns.svc.cluster.local
+        subset: stable
+        port:
+          number: 8082
+      weight: 100
+    # - destination:
+    #     host: search-srv.crackdeal-ns.svc.cluster.local
+    #     subset: canary
+    #     port:
+    #       number: 8082
+    #   weight: 20
+  - match:
+    - uri:
+        prefix: /auth/v1/
+    route:
+    - destination:
+        host: auth-srv.crackdeal-ns.svc.cluster.local
+        subset: stable
+        port:
+          number: 8001
+      weight: 100
+    # - destination:
+    #     host: auth-srv.crackdeal-ns.svc.cluster.local
+    #     subset: canary
+    #     port:
+    #       number: 8001
+    #   weight: 20
+  - match:
+    - uri:
+        prefix: /order/v1/
+    route:
+    - destination:
+        host: order-srv.crackdeal-ns.svc.cluster.local
+        subset: stable
+        port:
+          number: 8002
+      weight: 100
+    # - destination:
+    #     host: order-srv.crackdeal-ns.svc.cluster.local
+    #     subset: canary
+    #     port:
+    #       number: 8002
+    #   weight: 20
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: front-end-srv.crackdeal-ns.svc.cluster.local
+        subset: stable
+        port:
+          number: 3000
+      weight: 100
+    # - destination:
+    #     host: front-end-srv.crackdeal-ns.svc.cluster.local
+    #     subset: canary
+    #     port:
+    #       number: 3000
+    #   weight: 20    
